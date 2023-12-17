@@ -1,0 +1,77 @@
+name: Reusable deployment workflow
+
+on:
+  workflow_call:
+    inputs:
+      target-env:
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      KUBECONFIG:
+        required: true
+
+    
+
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        if: github.ref == 'refs/heads/master'
+        environment:
+          name: ${{ inputs.target-env }}
+
+        steps:  
+        - run: echo "🎉 target evn ${{ inputs.target-env}}"
+        - name: Clone
+          uses: actions/checkout@v2
+
+        - name: Configure AWS credentials
+          uses: aws-actions/configure-aws-credentials@v1
+          with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: eu-west-1
+
+        - name: Install and configure kubectl
+          run: |
+                VERSION=$(curl --silent https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+                # https://github.com/aws/aws-cli/issues/6920#issuecomment-1117981158
+                VERSION=v1.23.6
+                curl https://storage.googleapis.com/kubernetes-release/release/$VERSION/bin/linux/amd64/kubectl \
+                --progress-bar \
+                --location \
+                --remote-name
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin/
+                echo ${{ secrets.KUBECONFIG }} | base64 --decode > kubeconfig.yaml  
+                echo ${{inputs.target-env}}
+
+        - name: Login to Amazon ECR
+          id: login-ecr
+          uses: aws-actions/amazon-ecr-login@v1
+
+        - name: Update Kustomization
+          env:
+            ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+            SHORT_SHA: $(echo ${{ github.sha }} | cut -c 1-8)
+            FE-ECR_REPOSITORY: gaf-ecr-fe
+            BE-ECR_REPOSITORY: gaf-ecr-be
+          run: |
+              export FE_ECR_REPOSITORY=${{ env.ECR_REGISTRY }}/${{ env.FE-ECR_REPOSITORY }}
+              export BE_ECR_REPOSITORY=${{ env.ECR_REGISTRY }}/${{ env.BE-ECR_REPOSITORY }}
+              export IMAGE_TAG=${{ env.SHORT_SHA }} 
+              envsubst < k8s/base/kustomization.tmpl.yaml > k8s/base/kustomization.yaml
+        - name: Deploy-DEV
+          if:  inputs.target-env == 'Development'         
+          run: |
+                export KUBECONFIG=kubeconfig.yaml
+                kubectl apply -k k8s/overlays/dev
+        - name: Deploy-PROD
+          if:  inputs.target-env == 'Production'
+          run: |
+                export KUBECONFIG=kubeconfig.yaml
+                kubectl apply -k k8s/overlays/prod

@@ -1,0 +1,12 @@
+resources:
+- deployment.yaml
+- namespace.yaml
+- service.yaml
+
+images:
+- name: amazonaws.com/gaf-ecr-fe
+  newName: ${FE_ECR_REPOSITORY}
+  newTag: ${IMAGE_TAG}
+- name: amazonaws.com/gaf-ecr-be
+  newName: ${BE_ECR_REPOSITORY}
+  newTag: ${IMAGE_TAG}
